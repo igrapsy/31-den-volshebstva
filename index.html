@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -20,6 +21,7 @@ body {
   background:radial-gradient(ellipse at top,#35466e 0%,#182748 42%,#0b142d 100%);
   min-height:100vh;
 }
+body.access-locked main { display:none; }
 main { max-width:850px; margin:auto; padding:20px 15px 45px; }
 .hero { text-align:center; }
 .hero img {
@@ -110,6 +112,38 @@ footer {
   border-radius:15px; background:#ffffff0b; line-height:1.8;
 }
 .permission { margin:7px 0; }
+
+.access-screen {
+  min-height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:22px;
+  background:radial-gradient(ellipse at top,#35466e 0%,#182748 42%,#0b142d 100%);
+}
+.access-card {
+  width:100%;
+  max-width:460px;
+  padding:28px 22px;
+  text-align:center;
+  border:1px solid #d8b96c;
+  border-radius:20px;
+  background:linear-gradient(160deg,#29395f,#111d3c);
+  box-shadow:0 15px 50px #0009;
+  line-height:1.65;
+}
+.access-card h1 {
+  font-size:29px;
+  margin:0 0 15px;
+}
+.access-card p { color:#f8e8c5; }
+.access-card a { color:#ffe3a0; }
+.access-message {
+  min-height:44px;
+  margin-top:12px;
+  font-size:14px;
+  color:#f8e8c5;
+}
 @media(max-width:420px) {
   .calendar { grid-template-columns:repeat(3,1fr); gap:9px; }
   .day { min-height:82px; }
@@ -118,7 +152,29 @@ footer {
 </style>
 </head>
 
-<body>
+<body class="access-locked">
+
+<div class="access-screen" id="access-screen">
+  <div class="access-card">
+    <div style="font-size:54px;color:#f4d58a">✧</div>
+    <h1>31 день волшебства</h1>
+    <p>Встреча с собой</p>
+    <p id="access-description">
+      Это путешествие ждёт тебя. Чтобы открыть календарь, сначала проверь свой доступ.
+    </p>
+    <a class="action" href="https://web.tribute.tg/p/KW5" target="_blank" rel="noopener">
+      Приобрести календарь
+    </a>
+    <button class="action secondary" id="check-access" onclick="checkAccess()">
+      Я уже оплатила — проверить доступ
+    </button>
+    <div class="access-message" id="access-message"></div>
+    <p style="font-size:13px">
+      Если ты уже оплатила, но доступ пока не открылся, подожди немного и нажми проверку ещё раз.
+    </p>
+  </div>
+</div>
+
 <main>
   <section class="hero">
     <img src="assets/cover.PNG" alt="31 день волшебства">
@@ -148,7 +204,7 @@ footer {
 
   <h2 class="calendar-title">Твой календарь волшебства</h2>
   <div class="calendar" id="calendar"></div>
-  <div class="note">Окошки открываются день за днём — с 1 по 31 декабря.</div>
+  <div class="note">Начни с первого окошка в любой день. Следующее откроется после выполнения предыдущего задания и получения снежинки.</div>
 
   <footer>
     <div>Создано с теплом</div>
@@ -166,6 +222,7 @@ footer {
   </div>
 </div>
 
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script>
 const days = [
 {
@@ -588,29 +645,33 @@ reward:"Твоё новогоднее чудо — это встреча с со
 }
 ];
 
-const preview = new URLSearchParams(location.search).get("preview") === "1";
 const completedKey = "advent31_completed";
+const ACCESS_URL = "https://wfapgmflxojxfbjzlzqy.supabase.co/functions/v1/advent31-access";
 
 function getSaved() {
-  try { return JSON.parse(localStorage.getItem(completedKey) || "[]"); }
-  catch(e) { return []; }
+  try {
+    const value = JSON.parse(localStorage.getItem(completedKey) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch(e) { return []; }
 }
+
 function saveCompleted(value) {
   localStorage.setItem(completedKey, JSON.stringify(value));
 }
-function currentDay() {
-  const now = new Date();
-  if (now.getFullYear() !== 2026 || now.getMonth() !== 11) return 0;
-  return now.getDate();
-}
+
+/* Первое окошко открыто сразу.
+   Каждое следующее — только после снежинки за предыдущее. */
 function isAvailable(n) {
-  return preview || n <= currentDay();
+  if (n === 1) return true;
+  return getSaved().includes(n - 1);
 }
+
 function updateProgress() {
   const completed = getSaved();
   document.getElementById("count").textContent = completed.length;
   document.getElementById("progress").style.width = (completed.length / 31 * 100) + "%";
 }
+
 function renderCalendar() {
   const calendar = document.getElementById("calendar");
   calendar.innerHTML = "";
@@ -690,7 +751,61 @@ document.getElementById("modal").addEventListener("click",function(e) {
   if (e.target === this) closeModal();
 });
 
-renderCalendar();
+/* Проверка покупки через Telegram Mini App и Supabase */
+async function checkAccess() {
+  const message = document.getElementById("access-message");
+  const button = document.getElementById("check-access");
+  const tg = window.Telegram && window.Telegram.WebApp;
+
+  if (!tg || !tg.initData) {
+    message.textContent = "Открой календарь через Telegram-бота @magic31day_advent_bot.";
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "Проверяем...";
+  message.textContent = "Пожалуйста, подожди немного.";
+
+  try {
+    tg.ready();
+    tg.expand();
+
+    const response = await fetch(ACCESS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initData: tg.initData })
+    });
+
+    if (!response.ok) {
+      throw new Error("Ошибка проверки доступа");
+    }
+
+    const result = await response.json();
+
+    if (result.access === true) {
+      document.body.classList.remove("access-locked");
+      document.getElementById("access-screen").style.display = "none";
+      renderCalendar();
+      return;
+    }
+
+    message.textContent = "Покупка пока не найдена. Если ты только что оплатила, подожди немного и проверь ещё раз.";
+  } catch (error) {
+    message.textContent = "Не удалось проверить доступ. Проверь интернет и попробуй ещё раз.";
+  } finally {
+    button.disabled = false;
+    button.textContent = "Я уже оплатила — проверить доступ";
+  }
+}
+
+(function startApp() {
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+  }
+  document.body.classList.add("access-locked");
+})();
 </script>
 </body>
 </html>
